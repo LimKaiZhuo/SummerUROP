@@ -11,7 +11,7 @@ import tensorflow as tf
 from scipy.integrate import odeint
 from tensorflow.python.data import Dataset
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.logging.set_verbosity(tf.logging.ERROR)
 pd.options.display.max_rows = 10
 pd.options.display.float_format = '{:.1f}'.format
@@ -99,19 +99,6 @@ training_labels=conc_out(training_features,trans)
 validation_features=pd.DataFrame(data=np.random.random_sample([30,3]),columns=['ca','t','T'])
 validation_labels=conc_out(validation_features,trans)
 
-def my_input_fn(features, targets, batch_size=1,num_epochs=None,shuffle=True):
-    #Creating Dataset importing function, returning get_next from iterator
-    #features=features.to_dict('list')
-
-    ds=tf.data.Dataset.from_tensor_slices((features,targets))
-    if shuffle:
-        ds=ds.shuffle(buffer_size=10000)
-
-    ds=ds.batch(batch_size).repeat(num_epochs)
-
-    features,labels=ds.make_one_shot_iterator().get_next()
-    return features,labels
-
 def nn(input_featurs,hidden_layers=[10]):
     net=tf.layers.dense(input_featurs,hidden_layers[0],activation=tf.nn.sigmoid)
     if len(hidden_layers)>1:
@@ -130,46 +117,43 @@ def train_nn_regression_model(
         validation_examples,
         validation_targets):
 
-    # Create input functions.
+    #Dataset API
+    training_ds=tf.data.Dataset.from_tensor_slices((training_examples,training_targets)).shuffle(buffer_size=10000).repeat().batch(batch_size=batch_size)
+    validation_ds = tf.data.Dataset.from_tensor_slices((validation_examples, validation_targets)).batch(batch_size=validation_examples.shape[0]).repeat()
+    iter=tf.data.Iterator.from_structure(training_ds.output_types,training_ds.output_shapes)
+    features,labels=iter.get_next()
+    training_init=iter.make_initializer(training_ds)
+    validation_init=iter.make_initializer(validation_ds)
 
-    features,labels=my_input_fn(training_examples,training_targets,batch_size=batch_size)
+    # Create Optimisation Model
     predictions=nn(features,hidden_units)
-    loss=tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=predictions,labels=labels))
+    predictions_activation=predictions
+    loss=tf.reduce_mean(tf.losses.mean_squared_error(labels=labels,predictions=predictions))
     train_op=tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
     with tf.Session() as sess:
         #Training neural network
         sess.run(tf.global_variables_initializer())
+        #Training Mode
+        sess.run(training_init)
         for epoch in range(epochs):
             epoch_loss=0
             for _ in range(int(training_examples.shape[0]/batch_size)):
                 _,loss_value=sess.run([train_op,loss])
                 epoch_loss+=loss_value
             print('Epoch : ',epoch+1, ' out of ', epochs,' . Epoch loss = ',epoch_loss)
-
-        #Comparing actual output conc vs predicted output conc using training dataset
-        training_features,training_labels=my_input_fn(training_examples,training_targets,batch_size=training_examples.shape[0],shuffle=False)
-        training_predictions=nn(training_features,hidden_units)
-        validation_features, validation_labels = my_input_fn(validation_examples, validation_targets,batch_size=validation_examples.shape[0], shuffle=False)
-        validation_predictions = nn(validation_features, hidden_units)
-        sess.run(tf.global_variables_initializer())     #To initialise new prediction nodes
-        training_predictions=trans_for_labels(pd.DataFrame(data=sess.run(training_predictions),columns=['TP_Ca','TP_Cb']),trans)
-        validation_predictions = trans_for_labels(pd.DataFrame(data=sess.run(validation_predictions), columns=['VP_Ca', 'VP_Cb']), trans)
-        #Converting Targets from normalized to actual concentrations
-        training_targets=trans_for_labels(training_targets,trans)
-        validation_targets = trans_for_labels(validation_targets, trans)
-        #Printing out first 5 data
-        print(training_targets.head())
-        print(training_predictions.head())
-        print(validation_targets.head())
-        print(validation_predictions.head())
-
+        # Validation Mode
+        sess.run(validation_init)
+        validation_labels=trans_for_labels(pd.DataFrame(data=sess.run(labels), columns=['Ca', 'Cb']),trans)
+        validation_predictions=trans_for_labels(pd.DataFrame(data=sess.run(predictions_activation), columns=['VP_Ca', 'VP_Cb']),trans)
+        validation_out=pd.concat([validation_labels,validation_predictions],axis=1,sort=False)
+        print(validation_out)
 
 train_nn_regression_model(
-        learning_rate=0.02,
-        epochs=30,
+        learning_rate=0.002,
+        epochs=200,
         batch_size=50,
-        hidden_units=[100],
+        hidden_units=[10],
         training_examples=training_features,
         training_targets=training_labels,
         validation_examples=validation_features,
