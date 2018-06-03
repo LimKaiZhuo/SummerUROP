@@ -206,13 +206,14 @@ x=denbigh_rxn(Features(8,100,350,'a',single_example=True),plot_mode=True)
 
 
 def create_hparams(hidden_layers=[30], learning_rate=0.001, epochs=100, batch_size=64, activation='relu',
-                   optimizer='Adam', loss='mse', reg_term=0):
+                   optimizer='Adam', loss='mse', patience=4, reg_term=0):
     """
     Creates hparam dict for input into create_DNN_model or other similar functions. Contain Hyperparameter info
     :return: hparam dict
     """
-    names = ['hidden_layers', 'learning_rate', 'epochs', 'batch_size', 'activation', 'optimizer', 'loss', 'reg_term']
-    values = [hidden_layers, learning_rate, epochs, batch_size, activation, optimizer, loss, reg_term]
+    names = ['hidden_layers', 'learning_rate', 'epochs', 'batch_size', 'activation', 'optimizer', 'loss', 'patience',
+             'reg_term']
+    values = [hidden_layers, learning_rate, epochs, batch_size, activation, optimizer, loss, patience, reg_term]
     hparams = dict(zip(names, values))
     return hparams
 
@@ -252,11 +253,12 @@ class New_DNN:
                                 activation=self.hparams['activation'],
                                 kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
         model.add(Dense(self.labels_dim, activation='linear'))
+        print(pd.DataFrame(self.hparams))
         model.summary()
         return model
 
     def train_model_epochs(self, reaction_name, training_size, testing_size, validation_size,
-                           model_dir='./save/DNN_epochs.h5', initial_species=1,plot_mode=False):
+                           model_dir='./save/DNN_epochs.h5', initial_species=1, plot_mode=False):
         training_features = create_random_features(training_size, initial_species)
         training_labels = reaction_name(training_features)
 
@@ -266,6 +268,7 @@ class New_DNN:
         validation_features = create_random_features(validation_size, initial_species)
         validation_labels = reaction_name(validation_features)
 
+        # Training model
         history = self.model.fit(training_features.n_features, training_labels.n_labels,
                                  epochs=self.hparams['epochs'],
                                  batch_size=self.hparams['batch_size'],
@@ -283,7 +286,7 @@ class New_DNN:
         validation_loss = self.model.evaluate(validation_features.n_features, validation_labels.n_labels, verbose=0)
         print(validation_loss)
 
-        #Plotting
+        # Plotting
         if plot_mode:
             # summarize history for accuracy
             plt.plot(history.history['loss'])
@@ -294,5 +297,203 @@ class New_DNN:
             plt.legend(['train', 'test'], loc='upper left')
             plt.show()
 
-test = New_DNN(3, 5, create_hparams(hidden_layers=[30, 10]))
-test.train_model_epochs(denbigh_rxn, 500, 50, 10,plot_mode=True)
+        return validation_loss
+
+    def train_model_earlystopping(self, reaction_name, training_size, testing_size, validation_size,
+                                  model_dir='./save/DNN_earlystopping.h5', initial_species=1, plot_mode=False):
+        training_features = create_random_features(training_size, initial_species)
+        training_labels = reaction_name(training_features)
+
+        testing_features = create_random_features(testing_size, initial_species)
+        testing_labels = reaction_name(testing_features)
+
+        validation_features = create_random_features(validation_size, initial_species)
+        validation_labels = reaction_name(validation_features)
+
+        # Setting Up Early Stopping. Saving is done by the ModelCheckPoint callback
+        callbacks = [EarlyStopping(monitor='val_loss', patience=self.hparams['patience']),
+                     ModelCheckpoint(filepath=model_dir, monitor='val_loss', save_best_only=True)]
+
+        history = self.model.fit(training_features.n_features, training_labels.n_labels,
+                                 epochs=300,
+                                 batch_size=self.hparams['batch_size'],
+                                 callbacks=callbacks,
+                                 validation_data=(testing_features.n_features, testing_labels.n_labels))
+        # Earlystopping loss value and epoch number
+        best_loss_value = history.history['val_loss'][-self.hparams['patience'] - 1]
+        best_loss_epoch = len(history.history['val_loss']) - self.hparams['patience']
+        print('######## best_loss =', best_loss_value, ',', 'best_epoch =', best_loss_epoch, ' #######')
+
+        # Prediction and Loss on Validation Set
+        validation_predictions = Labels(self.model.predict(validation_features.n_features), 'n')
+        validation_data = pd.concat(
+            [validation_features.a_df(['Ca0']), validation_labels.a_df(['Ca', 'Cr', 'Ct', 'Cs', 'Cu']),
+             validation_predictions.a_df(['Ca', 'Cr', 'Ct', 'Cs', 'Cu'], pre_string='P_')], axis=1, sort=False)
+        print(validation_data)
+        validation_loss = self.model.evaluate(validation_features.n_features, validation_labels.n_labels, verbose=0)
+        print('validation_loss', validation_loss)
+
+        # Plotting
+        if plot_mode:
+            # summarize history for accuracy
+            plt.plot(history.history['loss'])
+            plt.plot(history.history['val_loss'])
+            plt.title('model loss')
+            plt.ylabel('loss')
+            plt.xlabel('epoch')
+            plt.legend(['train', 'test'], loc='upper left')
+            plt.show()
+
+        return validation_loss
+
+
+def test_DNN():
+    test = New_DNN(3, 5, create_hparams(hidden_layers=[30, 10], activation='relu'))
+    test.train_model_earlystopping(denbigh_rxn, 500, 50, 10, plot_mode=True)
+
+
+# test_DNN()
+
+def create_GAN_hparams(generator_hidden_layers=[30, 30], discriminator_hidden_layers=[30, 30], learning_rate=0.001,
+                       epochs=100, batch_size=32, activation='relu',
+                       optimizer='Adam', loss='mse', patience=4, reg_term=0):
+    """
+    Creates hparam dict for input into GAN class. Contain Hyperparameter info
+    :return: hparam dict
+    """
+    names = ['generator_hidden_layers', 'discriminator_hidden_layers', 'learning_rate', 'epochs', 'batch_size',
+             'activation', 'optimizer', 'loss', 'patience',
+             'reg_term']
+    values = [generator_hidden_layers, discriminator_hidden_layers, learning_rate, epochs, batch_size, activation,
+              optimizer, loss, patience, reg_term]
+    hparams = dict(zip(names, values))
+    return hparams
+
+
+def create_g_x(numel, reaction_name=denbigh_rxn, inital_species=1):
+    """
+    Creates training x to input into GAN.train_GAN() class method.
+    :param numel: Number of training examples
+    :param inital_species: Number of inital species. If 1, means only Ca0 present, and classes = 8. Ca0, t, T, and 5 others from denbigh rxn
+    :return: np array of numel x classes matrix.
+    """
+    x_features = create_random_features(numel, inital_species)
+    x_labels = reaction_name(x_features)
+    return np.concatenate((x_features.n_features, x_labels.n_labels), axis=1)
+
+
+class GAN:
+    def __init__(self, features_dim, labels_dim, GAN_hparams):
+        self.features_dim = features_dim
+        self.labels_dim = labels_dim
+        self.hparams = GAN_hparams
+
+        self.G = self.generator()
+        self.G.compile(loss=self.hparams['loss'], optimizer=self.hparams['optimizer'])
+
+        self.D = self.discriminator()
+        self.D.compile(loss='binary_crossentropy', optimizer=self.hparams['optimizer'], metrics=['accuracy'])
+
+        self.stacked_generator_discriminator = self.stacked_generator_discriminator()
+        self.stacked_generator_discriminator.compile(loss='binary_crossentropy', optimizer=self.hparams['optimizer'])
+
+    def generator(self):
+        # Set up Generator model
+        generator_input_dim = self.features_dim
+        model = Sequential()
+        generator_hidden_layers = self.hparams['generator_hidden_layers']
+
+        model.add(Dense(generator_hidden_layers[0],
+                        input_dim=generator_input_dim,
+                        activation=self.hparams['activation'],
+                        kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        numel = len(generator_hidden_layers)
+        if numel > 1:
+            for i in range(numel - 1):
+                model.add(Dense(generator_hidden_layers[i + 1],
+                                activation=self.hparams['activation'],
+                                kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        model.add(Dense(self.labels_dim, activation='linear'))
+
+        return model
+
+    def discriminator(self):
+        # Set up Discriminator model
+        discriminator_input_dim = self.features_dim
+        model = Sequential()
+        discriminator_hidden_layers = self.hparams['discriminator_hidden_layers']
+
+        model.add(Dense(discriminator_hidden_layers[0],
+                        input_dim=discriminator_input_dim,
+                        activation=self.hparams['activation'],
+                        kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        numel = len(discriminator_hidden_layers)
+        if numel > 1:
+            for i in range(numel - 1):
+                model.add(Dense(discriminator_hidden_layers[i + 1],
+                                activation=self.hparams['activation'],
+                                kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        model.add(Dense(1, activation='sigmoid'))
+
+        return model
+
+    def stacked_generator_discriminator(self):
+        # Freeze discriminator weights and biases when training generator.
+        self.D.trainable = False
+
+        model = Sequential()
+        model.add(self.G)
+        model.add(self.D)
+
+        return model
+
+    def train_GAN(self, training_x,plot_mode=False):
+        epochs = self.hparams['epochs']
+        batch_size = self.hparams['batch_size']
+        numel_rows = training_x.shape[0]
+        d_loss_store=[]
+        g_loss_store=[]
+
+        for cnt in range(epochs):  # Epochs is more like number of steps here. 1 step ==> 1 gradient update
+            # Training Discriminator
+            # Half batch size for discriminator, since half real half fake data =>combine
+            d_batch_size = int(batch_size / 2)
+            idx = np.random.randint(0, numel_rows - d_batch_size)  # Index to start drawing x batch_x from training_x
+            batch_x = training_x[idx:(idx + d_batch_size), :]  # Correct x
+            batch_z = np.random.random_sample((d_batch_size, self.features_dim))  # Random noise z to feed into G
+            batch_v = self.G.predict(batch_z)  # v = f(z)
+
+            combined_x_v = np.concatenate((batch_x, batch_v), axis=0)
+            combined_y = np.concatenate((np.ones((d_batch_size, 1)), np.zeros((d_batch_size, 1))), axis=0)
+
+            d_loss = self.D.train_on_batch(combined_x_v, combined_y)  # Returns loss and accuracy
+            d_loss_store.append(d_loss)
+
+            # Training Generator using stacked generator, discriminator model
+            batch_z = np.random.random_sample((batch_size, self.features_dim))  # Now is full batch size, not halved
+            mislabelled_y = np.ones((batch_size, 1))  # y output all labelled as 1 so that G will train towards that
+
+            g_loss = self.stacked_generator_discriminator.train_on_batch(batch_z, mislabelled_y)
+            g_loss_store.append(g_loss)
+            print('epoch: %d, [Discriminator :: d_loss: %f , d_acc: %f], [ Generator :: loss: %f]' % (cnt, d_loss[0], d_loss[1], g_loss))
+
+        # Plotting
+        if plot_mode:
+            d_loss_store=np.array(d_loss_store)
+            g_loss_store = np.array(g_loss_store)
+            plt.plot(d_loss_store[:,0])
+            plt.plot(d_loss_store[:, 1])
+            plt.plot(g_loss_store)
+            plt.title('model loss / acc')
+            plt.ylabel('loss')
+            plt.xlabel('epoch')
+            plt.legend(['d_loss', 'd_acc','g_loss'], loc='upper left')
+            plt.show()
+
+def test_GAN():
+    GAN_hparams = create_GAN_hparams(epochs=3000, batch_size=32)
+    test = GAN(8, 8, GAN_hparams)
+    test.train_GAN(create_g_x(100),plot_mode=True)
+
+
+test_GAN()
