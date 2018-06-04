@@ -1,6 +1,6 @@
 import keras as K
 from keras.models import Sequential
-from keras.layers import Dense
+from keras.layers import Dense, Dropout
 from keras import regularizers
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 import matplotlib.pyplot as plt
@@ -356,16 +356,16 @@ def test_DNN():
 
 def create_GAN_hparams(generator_hidden_layers=[30, 30], discriminator_hidden_layers=[30, 30], learning_rate=0.001,
                        epochs=100, batch_size=32, activation='relu',
-                       optimizer='Adam', loss='mse', patience=4, reg_term=0):
+                       optimizer='Adam', loss='mse', patience=4, reg_term=0, generator_dropout=0,discriminator_dropout=0):
     """
     Creates hparam dict for input into GAN class. Contain Hyperparameter info
     :return: hparam dict
     """
     names = ['generator_hidden_layers', 'discriminator_hidden_layers', 'learning_rate', 'epochs', 'batch_size',
              'activation', 'optimizer', 'loss', 'patience',
-             'reg_term']
+             'reg_term','generator_dropout','discriminator_dropout']
     values = [generator_hidden_layers, discriminator_hidden_layers, learning_rate, epochs, batch_size, activation,
-              optimizer, loss, patience, reg_term]
+              optimizer, loss, patience, reg_term,generator_dropout,discriminator_dropout]
     hparams = dict(zip(names, values))
     return hparams
 
@@ -402,11 +402,15 @@ class GAN:
         generator_input_dim = self.features_dim
         model = Sequential()
         generator_hidden_layers = self.hparams['generator_hidden_layers']
+        generator_dropout=self.hparams['generator_dropout']
 
         model.add(Dense(generator_hidden_layers[0],
                         input_dim=generator_input_dim,
                         activation=self.hparams['activation'],
                         kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        if generator_dropout!=0:
+            model.add(Dropout(generator_dropout))
+
         numel = len(generator_hidden_layers)
         if numel > 1:
             for i in range(numel - 1):
@@ -422,11 +426,15 @@ class GAN:
         discriminator_input_dim = self.features_dim
         model = Sequential()
         discriminator_hidden_layers = self.hparams['discriminator_hidden_layers']
+        discriminator_dropout=self.hparams['discriminator_dropout']
 
         model.add(Dense(discriminator_hidden_layers[0],
                         input_dim=discriminator_input_dim,
                         activation=self.hparams['activation'],
                         kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        if discriminator_dropout!=0:
+            model.add(Dropout(discriminator_dropout))
+
         numel = len(discriminator_hidden_layers)
         if numel > 1:
             for i in range(numel - 1):
@@ -460,7 +468,7 @@ class GAN:
             d_batch_size = int(batch_size / 2)
             idx = np.random.randint(0, numel_rows - d_batch_size)  # Index to start drawing x batch_x from training_x
             batch_x = training_x[idx:(idx + d_batch_size), :]  # Correct x
-            batch_z = np.random.random_sample((d_batch_size, self.features_dim))  # Random noise z to feed into G
+            batch_z = np.random.normal(0,1,(d_batch_size, self.features_dim))  # Random noise z to feed into G
             batch_v = self.G.predict(batch_z)  # v = f(z)
 
             combined_x_v = np.concatenate((batch_x, batch_v), axis=0)
@@ -470,7 +478,7 @@ class GAN:
             d_loss_store.append(d_loss)
 
             # Training Generator using stacked generator, discriminator model
-            batch_z = np.random.random_sample((batch_size, self.features_dim))  # Now is full batch size, not halved
+            batch_z = np.random.normal(0,1,(batch_size, self.features_dim))  # Now is full batch size, not halved
             mislabelled_y = np.ones((batch_size, 1))  # y output all labelled as 1 so that G will train towards that
 
             g_loss = self.stacked_generator_discriminator.train_on_batch(batch_z, mislabelled_y)
@@ -485,15 +493,15 @@ class GAN:
             plt.plot(d_loss_store[:, 1])
             plt.plot(g_loss_store)
             plt.title('model loss / acc')
-            plt.ylabel('loss')
+            plt.ylabel('loss / acc')
             plt.xlabel('epoch')
             plt.legend(['d_loss', 'd_acc','g_loss'], loc='upper left')
             plt.show()
 
 def test_GAN():
-    GAN_hparams = create_GAN_hparams(epochs=3000, batch_size=32)
+    GAN_hparams = create_GAN_hparams(epochs=3000, batch_size=64,generator_hidden_layers=[100,100],discriminator_hidden_layers=[100,100],generator_dropout=0.2,discriminator_dropout=0.2)
     test = GAN(8, 8, GAN_hparams)
-    test.train_GAN(create_g_x(100),plot_mode=True)
+    test.train_GAN(create_g_x(1000),plot_mode=True)
 
 
 test_GAN()
