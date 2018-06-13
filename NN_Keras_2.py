@@ -1,7 +1,7 @@
 import keras as K
 from keras.models import Sequential
 from keras.layers import Dense, Dropout
-from keras import regularizers
+from keras import regularizers, optimizers
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,7 +12,7 @@ from skopt import gp_minimize
 from skopt.space import Real, Categorical, Integer
 from skopt.utils import use_named_args
 from skopt.plots import plot_convergence
-import os
+import os,itertools
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 pd.set_option('display.max_rows', 500)
@@ -354,18 +354,19 @@ def test_DNN():
 
 # test_DNN()
 
-def create_GAN_hparams(generator_hidden_layers=[30, 30], discriminator_hidden_layers=[30, 30], learning_rate=0.001,
+def create_GAN_hparams(generator_hidden_layers=[30, 30], discriminator_hidden_layers=[30, 30], learning_rate=None,
                        epochs=100, batch_size=32, activation='relu',
-                       optimizer='Adam', loss='mse', patience=4, reg_term=0, generator_dropout=0,discriminator_dropout=0):
+                       optimizer='Adam', loss='mse', patience=4, reg_term=0, generator_dropout=0,
+                       discriminator_dropout=0):
     """
     Creates hparam dict for input into GAN class. Contain Hyperparameter info
     :return: hparam dict
     """
     names = ['generator_hidden_layers', 'discriminator_hidden_layers', 'learning_rate', 'epochs', 'batch_size',
              'activation', 'optimizer', 'loss', 'patience',
-             'reg_term','generator_dropout','discriminator_dropout']
+             'reg_term', 'generator_dropout', 'discriminator_dropout']
     values = [generator_hidden_layers, discriminator_hidden_layers, learning_rate, epochs, batch_size, activation,
-              optimizer, loss, patience, reg_term,generator_dropout,discriminator_dropout]
+              optimizer, loss, patience, reg_term, generator_dropout, discriminator_dropout]
     hparams = dict(zip(names, values))
     return hparams
 
@@ -388,27 +389,39 @@ class GAN:
         self.labels_dim = labels_dim
         self.hparams = GAN_hparams
 
-        self.G = self.generator()
-        self.G.compile(loss=self.hparams['loss'], optimizer=self.hparams['optimizer'])
+        if GAN_hparams['learning_rate'] is None:
+            self.G = self.generator()
+            self.G.compile(loss=self.hparams['loss'], optimizer=self.hparams['optimizer'])
 
-        self.D = self.discriminator()
-        self.D.compile(loss='binary_crossentropy', optimizer=self.hparams['optimizer'], metrics=['accuracy'])
+            self.D = self.discriminator()
+            self.D.compile(loss='binary_crossentropy', optimizer=self.hparams['optimizer'], metrics=['accuracy'])
 
-        self.stacked_generator_discriminator = self.stacked_generator_discriminator()
-        self.stacked_generator_discriminator.compile(loss='binary_crossentropy', optimizer=self.hparams['optimizer'])
+            self.stacked_generator_discriminator = self.stacked_generator_discriminator()
+            self.stacked_generator_discriminator.compile(loss='binary_crossentropy', optimizer=self.hparams['optimizer'])
+        else:
+            sgd=optimizers.Adam(lr=GAN_hparams['learning_rate'])
+            self.G = self.generator()
+            self.G.compile(loss=self.hparams['loss'], optimizer=sgd)
+
+            self.D = self.discriminator()
+            self.D.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
+
+            self.stacked_generator_discriminator = self.stacked_generator_discriminator()
+            self.stacked_generator_discriminator.compile(loss='binary_crossentropy',
+                                                         optimizer=sgd)
 
     def generator(self):
         # Set up Generator model
         generator_input_dim = self.features_dim
         model = Sequential()
         generator_hidden_layers = self.hparams['generator_hidden_layers']
-        generator_dropout=self.hparams['generator_dropout']
+        generator_dropout = self.hparams['generator_dropout']
 
         model.add(Dense(generator_hidden_layers[0],
                         input_dim=generator_input_dim,
                         activation=self.hparams['activation'],
                         kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
-        if generator_dropout!=0:
+        if generator_dropout != 0:
             model.add(Dropout(generator_dropout))
 
         numel = len(generator_hidden_layers)
@@ -426,13 +439,13 @@ class GAN:
         discriminator_input_dim = self.features_dim
         model = Sequential()
         discriminator_hidden_layers = self.hparams['discriminator_hidden_layers']
-        discriminator_dropout=self.hparams['discriminator_dropout']
+        discriminator_dropout = self.hparams['discriminator_dropout']
 
         model.add(Dense(discriminator_hidden_layers[0],
                         input_dim=discriminator_input_dim,
                         activation=self.hparams['activation'],
                         kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
-        if discriminator_dropout!=0:
+        if discriminator_dropout != 0:
             model.add(Dropout(discriminator_dropout))
 
         numel = len(discriminator_hidden_layers)
@@ -455,12 +468,17 @@ class GAN:
 
         return model
 
-    def train_GAN(self, training_x,plot_mode=False):
+    def train_GAN(self, training_x, plot_mode=False):
         epochs = self.hparams['epochs']
         batch_size = self.hparams['batch_size']
         numel_rows = training_x.shape[0]
-        d_loss_store=[]
-        g_loss_store=[]
+        d_loss_store = []
+        g_loss_store = []
+        plt.figure()
+        plt.title('model loss / acc , (G,D) = (' + str(self.hparams['generator_hidden_layers'][0]) + ',' + str(
+            self.hparams['discriminator_hidden_layers'][0]) + ')')
+        plt.ylabel('loss / acc')
+        plt.xlabel('epoch')
 
         for cnt in range(epochs):  # Epochs is more like number of steps here. 1 step ==> 1 gradient update
             # Training Discriminator
@@ -468,7 +486,7 @@ class GAN:
             d_batch_size = int(batch_size / 2)
             idx = np.random.randint(0, numel_rows - d_batch_size)  # Index to start drawing x batch_x from training_x
             batch_x = training_x[idx:(idx + d_batch_size), :]  # Correct x
-            batch_z = np.random.normal(0,1,(d_batch_size, self.features_dim))  # Random noise z to feed into G
+            batch_z = np.random.normal(0, 1, (d_batch_size, self.features_dim))  # Random noise z to feed into G
             batch_v = self.G.predict(batch_z)  # v = f(z)
 
             combined_x_v = np.concatenate((batch_x, batch_v), axis=0)
@@ -478,30 +496,49 @@ class GAN:
             d_loss_store.append(d_loss)
 
             # Training Generator using stacked generator, discriminator model
-            batch_z = np.random.normal(0,1,(batch_size, self.features_dim))  # Now is full batch size, not halved
+            batch_z = np.random.normal(0, 1, (batch_size, self.features_dim))  # Now is full batch size, not halved
             mislabelled_y = np.ones((batch_size, 1))  # y output all labelled as 1 so that G will train towards that
 
             g_loss = self.stacked_generator_discriminator.train_on_batch(batch_z, mislabelled_y)
             g_loss_store.append(g_loss)
-            print('epoch: %d, [Discriminator :: d_loss: %f , d_acc: %f], [ Generator :: loss: %f]' % (cnt, d_loss[0], d_loss[1], g_loss))
+            print('epoch: %d, [Discriminator :: d_loss: %f , d_acc: %f], [ Generator :: loss: %f]' % (
+            cnt, d_loss[0], d_loss[1], g_loss))
 
         # Plotting
         if plot_mode:
-            d_loss_store=np.array(d_loss_store)
+            d_loss_store = np.array(d_loss_store)
             g_loss_store = np.array(g_loss_store)
-            plt.plot(d_loss_store[:,0])
+            plt.plot(d_loss_store[:, 0])
             plt.plot(d_loss_store[:, 1])
             plt.plot(g_loss_store)
-            plt.title('model loss / acc')
-            plt.ylabel('loss / acc')
-            plt.xlabel('epoch')
-            plt.legend(['d_loss', 'd_acc','g_loss'], loc='upper left')
-            plt.show()
+            plt.legend(['d_loss', 'd_acc', 'g_loss'], loc='upper left')
+            plt.savefig('./plots/'+str(self.hparams['generator_hidden_layers'][0])+'_'+str(self.hparams['discriminator_hidden_layers'][0]), bbox_inches='tight')
+            plt.clf()
+
+        plt.close()
+
 
 def test_GAN():
-    GAN_hparams = create_GAN_hparams(epochs=3000, batch_size=64,generator_hidden_layers=[100,100],discriminator_hidden_layers=[100,100],generator_dropout=0.2,discriminator_dropout=0.2)
+    GAN_hparams = create_GAN_hparams(epochs=1000, batch_size=64, generator_hidden_layers=[50, 50],
+                                     discriminator_hidden_layers=[20, 20], generator_dropout=0.2,
+                                     discriminator_dropout=0.2)
     test = GAN(8, 8, GAN_hparams)
-    test.train_GAN(create_g_x(1000),plot_mode=True)
+    test.train_GAN(create_g_x(1000), plot_mode=True)
 
 
-test_GAN()
+#test_GAN()
+
+def meshgrid_GAN():
+    linspace = np.arange(10, 200, 10)
+    meshgrid = list(itertools.product(linspace,linspace))
+
+    for i in range(len(meshgrid)):
+        g_hl=meshgrid[i][0]
+        d_hl = meshgrid[i][1]
+        GAN_hparams = create_GAN_hparams(epochs=1000, batch_size=64, generator_hidden_layers=[g_hl,g_hl ],
+                                         discriminator_hidden_layers=[d_hl,d_hl], generator_dropout=0.2,
+                                         discriminator_dropout=0.2)
+        test = GAN(8, 8, GAN_hparams)
+        test.train_GAN(create_g_x(1000), plot_mode=True)
+
+meshgrid_GAN()
