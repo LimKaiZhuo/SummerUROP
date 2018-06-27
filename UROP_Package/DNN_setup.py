@@ -17,7 +17,7 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.expand_frame_repr', False)
 
 
-def create_random_features(total_number, species):
+def create_random_features(total_number, species, save_name='features',save_mode=False):
     """
     Creates random values for con, time, and temperature
     :param total_number: Total number of feature examples.
@@ -25,7 +25,7 @@ def create_random_features(total_number, species):
     :return: class Feature with required number of species and time and temperature.
     """
     return Features(np.random.random_sample((total_number, species)), np.random.random_sample((total_number, 1)),
-                    np.random.random_sample((total_number, 1)), 'n')
+                    np.random.random_sample((total_number, 1)), 'n', save_name=save_name,save_mode=save_mode)
 
 
 def create_hparams(hidden_layers=[30], learning_rate=0.001, epochs=100, batch_size=64, activation='relu',
@@ -80,6 +80,28 @@ class New_DNN:
         print(pd.DataFrame(self.hparams))
         model.summary()
         return model
+
+    def train_model_epochs_training_data_only(self, training_features, training_labels,
+                                  save_name='DNN_training_only.h5', save_dir='./save/models/',
+                                  plot_mode=False, save_mode=False):
+        # Training model
+        history = self.model.fit(training_features.n_features, training_labels.n_labels,
+                                 epochs=self.hparams['epochs'],
+                                 batch_size=self.hparams['batch_size'],
+                                 verbose=self.hparams['verbose'])
+        # Saving Model
+        if save_mode:
+            self.model.save(save_dir + save_name)
+        # Plotting
+        if plot_mode:
+            # summarize history for accuracy
+            plt.plot(history.history['loss'])
+            plt.title('model loss')
+            plt.ylabel('loss')
+            plt.xlabel('epoch')
+            plt.legend(['train'], loc='upper left')
+            plt.show()
+        return self.model
 
     def train_model_epochs(self, training_size, testing_size, validation_size, reaction_name=denbigh_rxn,
                            save_name='DNN_epochs.h5', save_dir='./save/models/', initial_species=1,
@@ -211,6 +233,65 @@ class New_DNN:
 
         return validation_loss
 
+class DNN_classifer:
+    def __init__(self, features_dim, hparams):
+        """
+        Initialises new DNN model based on input features_dim, labels_dim, hparams
+        :param features_dim: Number of input feature nodes. Integer
+        :param labels_dim: Number of output label nodes. Integer
+        :param hparams: Dict containing hyperparameter information. Dict can be created using create_hparams() function.
+        hparams includes: hidden_layers: List containing number of nodes in each hidden layer. [10, 20] means 10 then 20 nodes.
+        """
+        self.features_dim = features_dim
+        self.hparams = hparams
+
+        # Build New Compiled DNN model
+        self.model = self.create_DNN_model()
+        self.model.compile(optimizer=hparams['optimizer'], loss='binary_crossentropy')
+
+    def create_DNN_model(self):
+        """
+        Creates Keras Dense Neural Network model. Not compiled yet!
+        :return: Uncompiled Keras DNN model
+        """
+        model = Sequential()
+        hidden_layers = self.hparams['hidden_layers']
+        model.add(Dense(hidden_layers[0],
+                        input_dim=self.features_dim,
+                        activation=self.hparams['activation'],
+                        kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        numel = len(hidden_layers)
+        if numel > 1:
+            for i in range(numel - 1):
+                model.add(Dense(hidden_layers[i + 1],
+                                activation=self.hparams['activation'],
+                                kernel_regularizer=regularizers.l2(self.hparams['reg_term'])))
+        model.add(Dense(1, activation='sigmoid'))
+        print(pd.DataFrame(self.hparams))
+        model.summary()
+        return model
+
+    def train_model_epochs_training_data_only(self, training_features, training_labels,
+                                  save_name='cDNN_training_only.h5', save_dir='./save/models/', bins=[10,6,0],
+                                  plot_mode=False, save_mode=False):
+        # Training model
+        history = self.model.fit(training_features.n_features, training_labels.binning(bins),
+                                 epochs=self.hparams['epochs'],
+                                 batch_size=self.hparams['batch_size'],
+                                 verbose=self.hparams['verbose'])
+        # Saving Model
+        if save_mode:
+            self.model.save(save_dir + save_name)
+        # Plotting
+        if plot_mode:
+            # summarize history for accuracy
+            plt.plot(history.history['loss'])
+            plt.title('model loss')
+            plt.ylabel('loss')
+            plt.xlabel('epoch')
+            plt.legend(['train'], loc='upper left')
+            plt.show()
+        return self.model
 
 if __name__ == '__main__':
     # Testing

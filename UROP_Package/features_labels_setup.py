@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pickle
 import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -10,8 +11,14 @@ pd.set_option('display.expand_frame_repr', False)
 # trans contain information for the transformation of concentration, time, and temperature respectively
 trans = np.array([[0.5, 10], [50, 100], [250, 450]])
 
+
+def feature_splitter(features):
+    features_dim=features.shape[1]
+    return features[:, 0:features_dim - 2], features[:, [features_dim - 2]], features[:, [features_dim - 1]]
+
+
 class Features:
-    def __init__(self, input_conc, input_t, input_T, mode, trans=trans, single_example=False):
+    def __init__(self, input_conc, input_t, input_T, mode, trans=np.array([[0.5, 10], [50, 100], [250, 450]]), single_example=False,save_name='features', save_mode=False):
         """
         To keep class of features which has both normalized and actual values as attributes
         All inputs must be numpy array. Ensure that conc, t, T have same number of rows!
@@ -49,6 +56,9 @@ class Features:
             self.n_t = (input_t - trans[1, 0]) / (trans[1, 1] - trans[1, 0])
             self.n_T = (input_T - trans[2, 0]) / (trans[2, 1] - trans[2, 0])
             self.n_features = np.concatenate((self.n_conc, self.n_t, self.n_T), axis=1)
+        if save_mode:
+            file_path=open('./save/features_labels/'+save_name+'.obj','wb')
+            pickle.dump(self,file_path)
 
     def a_df(self, conc_names=None, pre_string=None):
         """
@@ -74,7 +84,7 @@ class Features:
 
 
 class Labels:
-    def __init__(self, input_conc, mode, trans=trans):
+    def __init__(self, input_conc, mode, trans=np.array([[0.5, 10], [50, 100], [250, 450]])):
         """
         To keep class of features which has both normalized and actual values as attributes
         All inputs must be numpy array. Ensure that conc, t, T have same number of rows!
@@ -111,5 +121,8 @@ class Labels:
                     columns.append(pre_string + conc_names[i])
                 else:
                     columns.append(conc_names[i])
-
         return pd.DataFrame(data=self.a_labels, columns=columns)
+
+    def binning(self,bins):
+        targets = np.digitize(self.a_labels[:, 1], bins) - 1
+        return targets
